@@ -13,6 +13,12 @@ local M = {
   -- openssl path
   openssl_path = "openssl",
 
+  -- Process environment file content before parsing.
+  -- Called for http-client.env.json, http-client.private.env.json, and .env files.
+  -- Receives (file_path: string, content: string) and should return transformed content string.
+  -- Results are cached per-file based on file modification time.
+  env_file_processor = nil, ---@type fun(file_path: string, content: string): string | nil
+
   -- set scope for environment and request variables
   -- possible values: b = buffer, g = global
   environment_scope = "b",

@@ -1,10 +1,41 @@
 local Config = require("kulala.config")
 local DB = require("kulala.db")
 local FS = require("kulala.utils.fs")
+local Json = require("kulala.utils.json")
 local Logger = require("kulala.logger")
 local Table = require("kulala.utils.table")
 
 local M = {}
+
+local env_file_cache = {} -- { [file_path] = { mtime = number, content = string } }
+
+local function read_env_file(file_path)
+  local content = FS.read_file(file_path)
+  if not content then return end
+
+  local processor = Config.get().env_file_processor
+  if not processor then return content end
+
+  local stat = vim.uv.fs_stat(file_path)
+  local mtime = stat and stat.mtime.sec or 0
+  local cached = env_file_cache[file_path]
+
+  if cached and cached.mtime == mtime then return cached.content end
+
+  local ok, result = pcall(processor, file_path, content)
+
+  if not ok then
+    Logger.warn("env_file_processor error: " .. tostring(result))
+    return content
+  end
+
+  if type(result) == "string" then
+    env_file_cache[file_path] = { mtime = mtime, content = result }
+    return result
+  end
+
+  return content
+end
 
 local function get_vscode_env()
   if Config.get().vscode_rest_client_environmentvars then
@@ -49,13 +80,12 @@ local function get_dot_env(env)
   local dotenv = FS.find_file_in_parent_dirs(".env")
 
   if dotenv then
-    local dotenv_env = vim.fn.readfile(dotenv)
+    local content = read_env_file(dotenv)
+    local lines = content and vim.split(content, "\n") or {}
 
-    for _, line in ipairs(dotenv_env) do
-      -- if the line is not empty and not a comment, then
+    for _, line in ipairs(lines) do
       if not line:match("^%s*$") and not line:match("^%s*#") then
         local key, value = line:match("^%s*([^=]+)%s*=%s*(.*)%s*$")
-
         if key and value then env[key] = value end
       end
     end
@@ -68,7 +98,9 @@ local function get_http_client_env(name)
   local envs = FS.find_files_in_parent_dirs(name) or {}
 
   vim.iter(envs):rev():each(function(file)
-    local f = FS.read_json(file) or {}
+    local content = read_env_file(file)
+    if not content or content == "" then content = "{}" end
+    local f = Json.parse(content, nil, file) or {}
 
     if f["$shared"] then
       DB.update().http_client_env_shared =
